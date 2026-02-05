@@ -94,10 +94,10 @@ export function makeContextAwareSettings(
 
     // Only adjust ratios if they're at default values
     if (baseSettings.softTrimRatio === DEFAULT_CONTEXT_PRUNING_SETTINGS.softTrimRatio) {
-      settings.softTrimRatio = Math.min(0.3, 0.2);
+      settings.softTrimRatio = 0.2;
     }
     if (baseSettings.hardClearRatio === DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClearRatio) {
-      settings.hardClearRatio = Math.min(0.5, 0.35);
+      settings.hardClearRatio = 0.35;
     }
   } else if (
     contextWindowTokens <= 128_000 &&
