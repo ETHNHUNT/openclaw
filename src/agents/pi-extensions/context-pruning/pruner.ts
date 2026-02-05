@@ -2,6 +2,7 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent, TextContent, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { EffectiveContextPruningSettings } from "./settings.js";
+import { makeContextAwareSettings } from "./settings.js";
 import { makeToolPrunablePredicate } from "./tools.js";
 
 const CHARS_PER_TOKEN_ESTIMATE = 4;
@@ -229,7 +230,7 @@ export function pruneContextMessages(params: {
   isToolPrunable?: (toolName: string) => boolean;
   contextWindowTokensOverride?: number;
 }): AgentMessage[] {
-  const { messages, settings, ctx } = params;
+  const { messages, ctx } = params;
   const contextWindowTokens =
     typeof params.contextWindowTokensOverride === "number" &&
     Number.isFinite(params.contextWindowTokensOverride) &&
@@ -239,6 +240,9 @@ export function pruneContextMessages(params: {
   if (!contextWindowTokens || contextWindowTokens <= 0) {
     return messages;
   }
+
+  // Apply context-aware settings adjustments
+  const settings = makeContextAwareSettings(contextWindowTokens, params.settings);
 
   const charWindow = contextWindowTokens * CHARS_PER_TOKEN_ESTIMATE;
   if (charWindow <= 0) {

@@ -64,6 +64,54 @@ export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings =
   },
 };
 
+/**
+ * Computes context-window-aware pruning thresholds.
+ * For small context windows (<=32K), use more aggressive pruning to prevent wasteful token usage.
+ * Only adjusts values that are at their defaults to respect explicit user configuration.
+ * @param contextWindowTokens The model's context window size in tokens
+ * @param baseSettings The base settings to adjust
+ * @returns Adjusted settings with context-aware thresholds
+ */
+export function makeContextAwareSettings(
+  contextWindowTokens: number | undefined,
+  baseSettings: EffectiveContextPruningSettings,
+): EffectiveContextPruningSettings {
+  if (!contextWindowTokens || contextWindowTokens <= 0) {
+    return baseSettings;
+  }
+
+  const settings = { ...baseSettings };
+
+  // For smaller context windows, be more aggressive with pruning
+  // Only adjust if minPrunableToolChars is at the default value
+  if (
+    contextWindowTokens <= 32_000 &&
+    baseSettings.minPrunableToolChars === DEFAULT_CONTEXT_PRUNING_SETTINGS.minPrunableToolChars
+  ) {
+    // Use 10% of context window or 50KB, whichever is smaller
+    const contextBasedMin = Math.floor(contextWindowTokens * 0.1 * 4); // 4 chars/token
+    settings.minPrunableToolChars = Math.min(50_000, contextBasedMin);
+
+    // Only adjust ratios if they're at default values
+    if (baseSettings.softTrimRatio === DEFAULT_CONTEXT_PRUNING_SETTINGS.softTrimRatio) {
+      settings.softTrimRatio = Math.min(0.3, 0.2);
+    }
+    if (baseSettings.hardClearRatio === DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClearRatio) {
+      settings.hardClearRatio = Math.min(0.5, 0.35);
+    }
+  } else if (
+    contextWindowTokens <= 128_000 &&
+    baseSettings.minPrunableToolChars === DEFAULT_CONTEXT_PRUNING_SETTINGS.minPrunableToolChars
+  ) {
+    // Medium context windows: moderate adjustment
+    const contextBasedMin = Math.floor(contextWindowTokens * 0.08 * 4);
+    settings.minPrunableToolChars = Math.min(50_000, contextBasedMin);
+  }
+  // For large context windows (>128K), keep default settings
+
+  return settings;
+}
+
 export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningSettings | null {
   if (!raw || typeof raw !== "object") {
     return null;

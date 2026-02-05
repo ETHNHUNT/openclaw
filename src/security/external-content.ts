@@ -25,6 +25,14 @@ const SUSPICIOUS_PATTERNS = [
   /delete\s+all\s+(emails?|files?|data)/i,
   /<\/?system>/i,
   /\]\s*\n\s*\[?(system|assistant|user)\]?:/i,
+  // Additional security patterns
+  /eval\s*\(/i,
+  /new\s+Function\s*\(/i,
+  /document\.cookie/i,
+  /innerHTML\s*=/i,
+  /dangerouslySetInnerHTML/i,
+  /__proto__/i,
+  /constructor\[.*(prototype|constructor).*\]/i,
 ];
 
 /**
