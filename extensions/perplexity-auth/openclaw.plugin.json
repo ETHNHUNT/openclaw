@@ -1,0 +1,9 @@
+{
+  "id": "perplexity-auth",
+  "providers": ["perplexity"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
