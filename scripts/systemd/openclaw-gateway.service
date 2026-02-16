@@ -10,7 +10,7 @@ Environment="NODE_ENV=production"
 Environment="PATH=/home/codespace/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # NOTE: This unit file is intended for GitHub Codespaces; update the WorkingDirectory if used elsewhere.
 WorkingDirectory=/workspaces/openclaw
-ExecStart=/usr/local/bin/openclaw gateway run --bind loopback --port 18789 --force
+ExecStart=/home/codespace/.local/bin/openclaw gateway run --bind loopback --port 18789 --force
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
