@@ -211,11 +211,11 @@ fi
 # Ensure every new shell gets the right env vars for systemctl --user.
 PROFILE_SNIPPET="/etc/profile.d/systemd-user.sh"
 if [ ! -f "$PROFILE_SNIPPET" ]; then
-    cat > "$PROFILE_SNIPPET" << 'EOPROFILE'
+    cat > "$PROFILE_SNIPPET" << EOPROFILE
 # Set up environment for systemd --user (written by start-systemd.sh)
-if [ "$(id -u)" = "1000" ]; then
-    export XDG_RUNTIME_DIR="/run/user/1000"
-    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1000/bus"
+if [ "$(id -u)" = "${CS_UID}" ]; then
+    export XDG_RUNTIME_DIR="/run/user/${CS_UID}"
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${CS_UID}/bus"
 fi
 EOPROFILE
 fi
