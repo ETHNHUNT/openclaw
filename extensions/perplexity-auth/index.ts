@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import {
   buildOauthProviderAuthResult,
@@ -18,10 +18,18 @@ const DEFAULT_MODEL = "perplexity/sonar-pro";
 
 const PERPLEXITY_BASE = "https://www.perplexity.ai";
 const PERPLEXITY_API_BASE = "https://api.perplexity.ai";
-const LOGIN_URL = `${PERPLEXITY_BASE}/api/auth/signin/email`;
 const SESSION_URL = `${PERPLEXITY_BASE}/api/auth/session`;
+
+// Perplexity uses NextAuth.js — the Google sign-in trigger.
+// Opening this URL (POST via form) initiates the Google OAuth flow on
+// Perplexity's side. After Google auth, Perplexity sets session cookies
+// and redirects to callbackUrl.
+const GOOGLE_SIGNIN_URL = `${PERPLEXITY_BASE}/api/auth/signin/google`;
+const CSRF_URL = `${PERPLEXITY_BASE}/api/auth/csrf`;
+
 const CALLBACK_PORT = 51122;
-const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/perplexity-callback`;
+const CALLBACK_PATH = "/perplexity-callback";
+const CALLBACK_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
 
 const SESSION_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -34,25 +42,145 @@ const PERPLEXITY_MODELS = [
   "perplexity/sonar-deep-research",
 ];
 
-const RESPONSE_PAGE = `<!DOCTYPE html>
+// ---------------------------------------------------------------------------
+// HTML pages served by the localhost callback server
+// ---------------------------------------------------------------------------
+
+/** Page shown after cookies are captured — tells user to return to terminal. */
+const DONE_PAGE = `<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>OpenClaw Perplexity Auth</title>
-    <style>
-      body { font-family: system-ui, sans-serif; display: flex; justify-content: center;
-             align-items: center; min-height: 100vh; margin: 0; background: #0a0a0a; color: #e0e0e0; }
-      main { text-align: center; padding: 2rem; }
-      h1 { color: #20b2aa; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>Authentication complete</h1>
-      <p>You can return to the terminal.</p>
-    </main>
-  </body>
+<head>
+  <meta charset="utf-8" />
+  <title>OpenClaw Perplexity Auth</title>
+  <style>
+    body { font-family: system-ui, sans-serif; display: flex; justify-content: center;
+           align-items: center; min-height: 100vh; margin: 0; background: #0a0a0a; color: #e0e0e0; }
+    main { text-align: center; padding: 2rem; }
+    h1 { color: #20b2aa; }
+    .check { font-size: 3rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="check">&#10003;</div>
+    <h1>Authentication complete</h1>
+    <p>You can close this tab and return to the terminal.</p>
+  </main>
+</body>
 </html>`;
+
+/**
+ * Landing page served at the root of the localhost server.
+ * It opens Perplexity's Google sign-in in the same window. After the
+ * user authenticates with Google, Perplexity redirects back to perplexity.ai
+ * with session cookies set. The page then guides the user to extract and
+ * send those cookies to the localhost callback.
+ *
+ * Flow:
+ *   localhost:51122  →  (button click) → perplexity.ai/api/auth/signin/google
+ *                                       → accounts.google.com (Google OAuth)
+ *                                       → perplexity.ai (session set)
+ *                    ←  user runs bookmarklet or pastes cookies
+ */
+function buildLandingPage(state: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OpenClaw — Perplexity Google Sign-In</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0a0a0a;
+           color: #e0e0e0; min-height: 100vh; display: flex; justify-content: center;
+           align-items: center; }
+    main { max-width: 540px; padding: 2.5rem; text-align: center; }
+    h1 { color: #20b2aa; margin-bottom: 0.5rem; font-size: 1.5rem; }
+    .subtitle { color: #888; margin-bottom: 2rem; }
+    .step { background: #151515; border: 1px solid #2a2a2a; border-radius: 12px;
+            padding: 1.2rem 1.5rem; margin-bottom: 1rem; text-align: left; }
+    .step-num { display: inline-block; width: 1.5rem; height: 1.5rem; background: #20b2aa;
+                color: #000; border-radius: 50%; text-align: center; line-height: 1.5rem;
+                font-size: 0.85rem; font-weight: 700; margin-right: 0.5rem; }
+    .btn { display: inline-block; background: #4285f4; color: #fff; border: none;
+           padding: 0.8rem 2rem; border-radius: 8px; font-size: 1rem;
+           cursor: pointer; text-decoration: none; margin: 0.5rem 0; }
+    .btn:hover { background: #3367d6; }
+    .btn-green { background: #20b2aa; }
+    .btn-green:hover { background: #1a9e97; }
+    .code-box { background: #111; border: 1px solid #333; border-radius: 6px;
+                padding: 0.6rem 0.8rem; font-family: monospace; font-size: 0.8rem;
+                word-break: break-all; margin: 0.5rem 0; color: #ccc;
+                max-height: 80px; overflow-y: auto; }
+    #status { margin-top: 1.5rem; padding: 0.8rem; border-radius: 8px; display: none; }
+    #status.ok { display: block; background: #0d3d2e; border: 1px solid #20b2aa; color: #20b2aa; }
+    #status.err { display: block; background: #3d0d0d; border: 1px solid #aa2020; color: #ff6b6b; }
+    textarea { width: 100%; background: #111; border: 1px solid #333; border-radius: 6px;
+               color: #ccc; font-family: monospace; font-size: 0.8rem; padding: 0.5rem;
+               resize: vertical; min-height: 60px; margin: 0.5rem 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Perplexity &times; OpenClaw</h1>
+    <p class="subtitle">Sign in with your Google account linked to Perplexity</p>
+
+    <div class="step">
+      <span class="step-num">1</span>
+      <strong>Sign in with Google</strong>
+      <p style="margin:0.5rem 0 0.3rem;color:#999;">Click below to open Perplexity's Google sign-in.
+         Authenticate with the Google account linked to your Perplexity.</p>
+      <a class="btn" href="${PERPLEXITY_BASE}/" target="_blank" rel="noopener"
+         id="loginBtn">Sign in with Google on Perplexity</a>
+    </div>
+
+    <div class="step">
+      <span class="step-num">2</span>
+      <strong>Send cookies back</strong>
+      <p style="margin:0.5rem 0 0.3rem;color:#999;">After you are logged in on perplexity.ai,
+         open the browser console (<kbd>F12</kbd> → Console) and paste this snippet:</p>
+      <div class="code-box" id="snippet">fetch("${CALLBACK_URI}",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cookies:document.cookie,state:"${state}"})})</div>
+      <button class="btn btn-green" onclick="copySnippet()" style="font-size:0.85rem;">Copy snippet</button>
+    </div>
+
+    <div class="step">
+      <span class="step-num" style="background:#888;">&#8230;</span>
+      <strong>Or paste cookies manually</strong>
+      <p style="margin:0.5rem 0 0.3rem;color:#999;">DevTools → Application → Cookies → perplexity.ai.
+         Copy all as <code>name=val; name=val; ...</code></p>
+      <textarea id="manualCookies" placeholder="Paste cookies here..."></textarea>
+      <button class="btn btn-green" onclick="submitManual()" style="font-size:0.85rem;">Submit cookies</button>
+    </div>
+
+    <div id="status"></div>
+  </main>
+  <script>
+    function copySnippet() {
+      navigator.clipboard.writeText(document.getElementById("snippet").textContent)
+        .then(() => { setStatus("Snippet copied! Paste it in the browser console on perplexity.ai.", "ok"); })
+        .catch(() => { setStatus("Copy failed — select the text manually.", "err"); });
+    }
+    async function submitManual() {
+      const cookies = document.getElementById("manualCookies").value.trim();
+      if (!cookies) { setStatus("No cookies entered.", "err"); return; }
+      try {
+        const res = await fetch("${CALLBACK_URI}", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cookies, state: "${state}" }),
+        });
+        if (res.ok) { setStatus("Cookies sent! Return to the terminal.", "ok"); }
+        else { setStatus("Server error — try again.", "err"); }
+      } catch (e) { setStatus("Failed to reach local server: " + e.message, "err"); }
+    }
+    function setStatus(msg, kind) {
+      const el = document.getElementById("status");
+      el.textContent = msg;
+      el.className = kind;
+    }
+  </script>
+</body>
+</html>`;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,53 +189,56 @@ function shouldUseManualFlow(isRemote: boolean): boolean {
   return isRemote || isWSL2Sync();
 }
 
-function generateState(): string {
-  return randomBytes(16).toString("hex");
-}
-
 // ---------------------------------------------------------------------------
-// Cookie-based session auth flow
+// Cookie-based session auth flow (Google OAuth via Perplexity)
 // ---------------------------------------------------------------------------
-// Perplexity uses email-based magic link / OTP login. The flow:
-// 1. We start a localhost callback server
-// 2. We open Perplexity's login page in the user's browser
-// 3. user logs in → Perplexity sets session cookies
-// 4. We extract cookies via a helper page -OR- user pastes them manually
 //
-// Since Perplexity doesn't expose standard OAuth2, we use a session-cookie
-// approach similar to how Antigravity captures Google OAuth tokens.
+// Perplexity uses NextAuth.js with Google as an identity provider.
+// The complete flow:
+//
+//   1. We start a localhost HTTP server that serves a landing page.
+//   2. The landing page has a "Sign in with Google on Perplexity" button
+//      that opens perplexity.ai (the user clicks "Continue with Google").
+//   3. Google OAuth happens (PKCE is handled by Perplexity's server).
+//   4. After Google auth, Perplexity sets session cookies in the browser.
+//   5. The user runs a small JS snippet (or bookmarklet) on perplexity.ai
+//      that POST's document.cookie back to our localhost callback.
+//   6. We validate the cookies against Perplexity's session endpoint.
+//   7. Cookies are stored as an OAuth credential in OpenClaw.
+//
+// This mirrors the Antigravity plugin pattern: open Google sign-in →
+// authenticate → capture tokens via localhost callback.
 // ---------------------------------------------------------------------------
 
 /**
- * Starts a local HTTP server that serves a cookie-extraction helper page.
- * The page has a small JS snippet that reads document.cookie after
- * Perplexity login and POSTs it back to the server.
+ * Starts a local callback server with a landing page that guides the user
+ * through Google sign-in on Perplexity.
  */
-async function startCookieCallbackServer(params: { timeoutMs: number }) {
+async function startCookieCallbackServer(params: { timeoutMs: number; state: string }) {
   const port = CALLBACK_PORT;
   let settled = false;
-  let resolveCallback: (data: { cookies: string; sessionToken?: string }) => void;
+  let resolveCallback: (data: { cookies: string; state?: string }) => void;
   let rejectCallback: (err: Error) => void;
 
-  const callbackPromise = new Promise<{ cookies: string; sessionToken?: string }>(
-    (resolve, reject) => {
-      resolveCallback = (data) => {
-        if (settled) return;
-        settled = true;
-        resolve(data);
-      };
-      rejectCallback = (err) => {
-        if (settled) return;
-        settled = true;
-        reject(err);
-      };
-    },
-  );
+  const callbackPromise = new Promise<{ cookies: string; state?: string }>((resolve, reject) => {
+    resolveCallback = (data) => {
+      if (settled) return;
+      settled = true;
+      resolve(data);
+    };
+    rejectCallback = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+  });
 
   const timeout = setTimeout(() => {
-    rejectCallback(new Error("Timed out waiting for Perplexity login callback"));
+    rejectCallback(new Error("Timed out waiting for Perplexity login"));
   }, params.timeoutMs);
   timeout.unref?.();
+
+  const landingHtml = buildLandingPage(params.state);
 
   const server = createServer((req, res) => {
     if (!req.url) {
@@ -118,8 +249,15 @@ async function startCookieCallbackServer(params: { timeoutMs: number }) {
 
     const url = new URL(req.url, `http://localhost:${port}`);
 
-    // POST /perplexity-callback — receives cookies from the helper page or manual paste
-    if (url.pathname === "/perplexity-callback" && req.method === "POST") {
+    // GET / — serve the landing/guide page
+    if (url.pathname === "/" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(landingHtml);
+      return;
+    }
+
+    // POST /perplexity-callback — receives cookies
+    if (url.pathname === CALLBACK_PATH && req.method === "POST") {
       let body = "";
       req.on("data", (chunk: Buffer) => {
         body += chunk.toString();
@@ -129,13 +267,13 @@ async function startCookieCallbackServer(params: { timeoutMs: number }) {
           "Content-Type": "text/html; charset=utf-8",
           "Access-Control-Allow-Origin": "*",
         });
-        res.end(RESPONSE_PAGE);
+        res.end(DONE_PAGE);
 
         try {
-          const data = JSON.parse(body) as { cookies?: string; sessionToken?: string };
+          const data = JSON.parse(body) as { cookies?: string; state?: string };
           resolveCallback({
             cookies: data.cookies ?? "",
-            sessionToken: data.sessionToken,
+            state: data.state,
           });
         } catch {
           resolveCallback({ cookies: body });
@@ -146,21 +284,21 @@ async function startCookieCallbackServer(params: { timeoutMs: number }) {
       return;
     }
 
-    // OPTIONS preflight for CORS
+    // OPTIONS preflight
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
       });
       res.end();
       return;
     }
 
-    // GET /perplexity-callback — info page
-    if (url.pathname === "/perplexity-callback") {
+    // GET /perplexity-callback — direct hit shows done page
+    if (url.pathname === CALLBACK_PATH && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(RESPONSE_PAGE);
+      res.end(DONE_PAGE);
       return;
     }
 
@@ -190,11 +328,11 @@ async function startCookieCallbackServer(params: { timeoutMs: number }) {
 }
 
 /**
- * Validates Perplexity session cookies by hitting the session endpoint.
+ * Validates Perplexity session cookies by hitting the NextAuth session endpoint.
  */
 async function validatePerplexitySession(
   cookies: string,
-): Promise<{ valid: boolean; email?: string; isPro?: boolean }> {
+): Promise<{ valid: boolean; email?: string }> {
   try {
     const res = await fetch(SESSION_URL, {
       headers: {
@@ -223,8 +361,8 @@ async function validatePerplexitySession(
 }
 
 /**
- * Main login flow — opens Perplexity in browser for the user to log in,
- * then captures session cookies (via local callback or manual paste).
+ * Full login flow — opens a localhost landing page that guides the user
+ * through Perplexity's Google OAuth sign-in, then captures session cookies.
  */
 async function loginPerplexity(params: {
   isRemote: boolean;
@@ -239,49 +377,40 @@ async function loginPerplexity(params: {
   expires: number;
 }> {
   const needsManual = shouldUseManualFlow(params.isRemote);
-  const loginUrl = `${PERPLEXITY_BASE}/`;
+  const state = randomBytes(16).toString("hex");
 
-  let callbackServer: Awaited<ReturnType<typeof startCookieCallbackServer>> | null = null;
-
-  if (!needsManual) {
-    try {
-      callbackServer = await startCookieCallbackServer({ timeoutMs: CALLBACK_TIMEOUT_MS });
-    } catch {
-      callbackServer = null;
-    }
-  }
-
-  // Manual flow: user must copy cookies after logging in
-  if (!callbackServer) {
+  // ---- manual flow (remote / WSL2) ----
+  if (needsManual) {
     await params.note(
       [
-        "1. Open Perplexity in your browser and log in",
-        "2. Open DevTools (F12) → Application → Cookies → perplexity.ai",
-        "3. Copy all cookies as a semicolon-separated string",
-        "   Format: name1=value1; name2=value2; ...",
+        "1. Open Perplexity in your browser and sign in with Google:",
+        `   ${PERPLEXITY_BASE}/`,
         "",
-        `Login URL: ${loginUrl}`,
+        "2. After login, open DevTools (F12) → Console and run:",
+        `   fetch("${CALLBACK_URI}",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cookies:document.cookie})})`,
+        "",
+        "   OR copy cookies from DevTools → Application → Cookies → perplexity.ai",
+        "   and paste them below.",
       ].join("\n"),
-      "Perplexity Cookie Auth",
+      "Perplexity Google Sign-In",
     );
     params.log("");
-    params.log("Login to Perplexity here:");
-    params.log(loginUrl);
+    params.log("Open Perplexity and sign in with Google:");
+    params.log(`${PERPLEXITY_BASE}/`);
     params.log("");
 
     params.progress.update("Waiting for cookies…");
-    const cookieInput = await params.prompt(
-      "Paste your Perplexity cookies (from browser DevTools): ",
-    );
+    const cookieInput = await params.prompt("Paste your Perplexity session cookies: ");
 
     if (!cookieInput?.trim()) {
       throw new Error("No cookies provided");
     }
 
+    params.progress.update("Validating session…");
     const validation = await validatePerplexitySession(cookieInput.trim());
     if (!validation.valid) {
       throw new Error(
-        "Cookie validation failed. Make sure to copy all cookies from perplexity.ai.",
+        "Cookie validation failed — make sure you are logged in and copied all cookies from perplexity.ai.",
       );
     }
 
@@ -292,49 +421,52 @@ async function loginPerplexity(params: {
     };
   }
 
-  // Automatic flow: open browser and wait for callback
-  params.progress.update("Opening Perplexity login…");
+  // ---- automatic flow: localhost server + browser ----
+  let callbackServer: Awaited<ReturnType<typeof startCookieCallbackServer>> | null = null;
   try {
-    await params.openUrl(loginUrl);
+    callbackServer = await startCookieCallbackServer({
+      timeoutMs: CALLBACK_TIMEOUT_MS,
+      state,
+    });
   } catch {
-    // ignore — user can still open manually
+    // Port busy — fall back to manual paste
+    params.progress.update("Waiting for cookies…");
+    await params.note(
+      `Could not start local server on port ${CALLBACK_PORT}. Paste cookies manually.`,
+      "Fallback",
+    );
+    const cookieInput = await params.prompt("Paste your Perplexity session cookies: ");
+    if (!cookieInput?.trim()) throw new Error("No cookies provided");
+
+    const validation = await validatePerplexitySession(cookieInput.trim());
+    if (!validation.valid) {
+      throw new Error("Cookie validation failed.");
+    }
+    return {
+      cookies: cookieInput.trim(),
+      email: validation.email,
+      expires: Date.now() + SESSION_EXPIRY_MS,
+    };
   }
 
-  await params.note(
-    [
-      "Log in to Perplexity in your browser.",
-      "After logging in, run this in the browser console (F12):",
-      "",
-      `fetch("${REDIRECT_URI}", {`,
-      `  method: "POST",`,
-      `  headers: { "Content-Type": "application/json" },`,
-      `  body: JSON.stringify({ cookies: document.cookie })`,
-      `});`,
-      "",
-      "Or paste your cookies below.",
-    ].join("\n"),
-    "Perplexity Login",
-  );
+  // Open the localhost landing page (which has the Google sign-in button)
+  const landingUrl = `http://localhost:${CALLBACK_PORT}/`;
+  params.progress.update("Opening Google sign-in for Perplexity…");
+  try {
+    await params.openUrl(landingUrl);
+  } catch {
+    // ignore — user can open manually
+  }
 
-  params.progress.update("Waiting for Perplexity session…");
+  params.log("");
+  params.log("A browser page has opened to guide you through Google sign-in.");
+  params.log(`If it didn't open, go to: ${landingUrl}`);
+  params.log("");
 
-  // Race: wait for callback OR manual paste
-  const callbackResult = await Promise.race([
-    callbackServer.waitForCallback(),
-    (async () => {
-      // Give the callback server a few seconds head start
-      await new Promise((r) => setTimeout(r, 3000));
-      const input = await params.prompt(
-        "Or paste cookies here (leave empty to wait for browser callback): ",
-      );
-      if (input?.trim()) {
-        return { cookies: input.trim(), sessionToken: undefined };
-      }
-      // If empty, keep waiting for the callback server
-      return callbackServer!.waitForCallback();
-    })(),
-  ]);
+  params.progress.update("Waiting for Google sign-in via Perplexity…");
 
+  // Wait for cookies to arrive via the callback
+  const callbackResult = await callbackServer.waitForCallback();
   await callbackServer.close().catch(() => {});
 
   const cookies = callbackResult.cookies;
@@ -342,8 +474,20 @@ async function loginPerplexity(params: {
     throw new Error("No session cookies received");
   }
 
-  params.progress.update("Validating session…");
+  // Validate state if it was included
+  if (callbackResult.state && callbackResult.state !== state) {
+    throw new Error("State mismatch — possible CSRF. Please try again.");
+  }
+
+  params.progress.update("Validating Perplexity session…");
   const validation = await validatePerplexitySession(cookies);
+
+  if (!validation.valid) {
+    throw new Error(
+      "Session validation failed — the cookies may be incomplete. " +
+        "Make sure you ran the snippet on perplexity.ai after signing in.",
+    );
+  }
 
   return {
     cookies,
@@ -358,7 +502,7 @@ async function loginPerplexity(params: {
 const perplexityPlugin = {
   id: "perplexity-auth",
   name: "Perplexity Auth",
-  description: "Cookie-based session auth and API key auth for Perplexity AI",
+  description: "Google OAuth + cookie auth and API key auth for Perplexity AI",
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
     api.registerProvider({
@@ -369,15 +513,15 @@ const perplexityPlugin = {
       envVars: ["PERPLEXITY_API_KEY"],
       auth: [
         // ----------------------------------------------------------------
-        // Method 1: Cookie / session auth (no API key needed)
+        // Method 1: Google OAuth via Perplexity (cookie-based, no API key)
         // ----------------------------------------------------------------
         {
-          id: "cookie",
-          label: "Browser Login (Cookie)",
-          hint: "Log in via browser — no API key required",
+          id: "google-oauth",
+          label: "Google Sign-In (via Perplexity)",
+          hint: "Sign in with Google → captures Perplexity session cookies",
           kind: "oauth" as const,
           run: async (ctx: ProviderAuthContext) => {
-            const spin = ctx.prompter.progress("Starting Perplexity cookie auth…");
+            const spin = ctx.prompter.progress("Starting Perplexity Google sign-in…");
             try {
               const result = await loginPerplexity({
                 isRemote: ctx.isRemote,
@@ -395,7 +539,7 @@ const perplexityPlugin = {
                 modelEntries[m] = {};
               }
 
-              spin.stop("Perplexity cookie auth complete");
+              spin.stop("Perplexity Google sign-in complete");
 
               return {
                 profiles: [
@@ -420,13 +564,14 @@ const perplexityPlugin = {
                 } as ProviderAuthResult["configPatch"],
                 defaultModel: DEFAULT_MODEL,
                 notes: [
-                  "Cookie-based auth — sessions typically last 30 days.",
+                  "Authenticated via Google → Perplexity session cookies.",
+                  "Sessions typically last 30 days.",
                   "If requests fail, re-run: openclaw models auth login --provider perplexity",
                   "For stable API access, use an API key instead (perplexity.ai/settings/api).",
                 ],
               } satisfies ProviderAuthResult;
             } catch (err) {
-              spin.stop("Perplexity cookie auth failed");
+              spin.stop("Perplexity Google sign-in failed");
               throw err;
             }
           },

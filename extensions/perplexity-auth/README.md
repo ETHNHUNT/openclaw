@@ -1,7 +1,7 @@
 # Perplexity Auth (OpenClaw plugin)
 
-Auth provider plugin for **Perplexity AI** — supports both cookie-based session
-authentication (no API key required) and standard API key authentication.
+Auth provider plugin for **Perplexity AI** — supports Google OAuth sign-in
+(cookie-based, no API key) and standard API key authentication.
 
 ## Enable
 
@@ -15,15 +15,23 @@ Restart the Gateway after enabling.
 
 ## Authenticate
 
-### Method 1: Browser Login (Cookie) — no API key needed
+### Method 1: Google Sign-In (Cookie) — no API key needed
 
 ```bash
 openclaw models auth login --provider perplexity
-# Select "Browser Login (Cookie)"
+# Select "Google Sign-In (via Perplexity)"
 ```
 
-This opens Perplexity in your browser. After logging in, your session cookies
-are captured and stored. Sessions typically last 30 days.
+This opens a localhost page that walks you through:
+
+1. Click **"Sign in with Google on Perplexity"** — opens perplexity.ai
+2. Click **"Continue with Google"** and authenticate with the Google account
+   linked to your Perplexity account
+3. After login, run a small JS snippet in the browser console (provided
+   on the page) to send your session cookies back to the local server
+4. The plugin validates the session and stores the cookies
+
+Sessions typically last 30 days. Re-run the login flow if they expire.
 
 ### Method 2: API Key
 
