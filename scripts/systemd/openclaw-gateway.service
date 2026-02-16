@@ -7,9 +7,9 @@ After=network-online.target
 [Service]
 Type=simple
 Environment="NODE_ENV=production"
-# NOTE: This unit file is intended for GitHub Codespaces; update the WorkingDirectory if used elsewhere.
+Environment="PATH=/home/codespace/.local/bin:/home/codespace/.npm-global/bin:/home/codespace/bin:/home/codespace/.nvm/current/bin:/home/codespace/nvm/current/bin:/home/codespace/.fnm/current/bin:/home/codespace/.volta/bin:/home/codespace/.asdf/shims:/home/codespace/.local/share/pnpm:/home/codespace/.bun/bin:/usr/local/share/nvm/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 WorkingDirectory=/workspaces/openclaw
-ExecStart=/bin/bash -lc 'exec openclaw gateway run --bind loopback --port 18789 --force'
+ExecStart=/home/codespace/nvm/current/bin/node /workspaces/openclaw/dist/entry.js gateway --port 18789
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
