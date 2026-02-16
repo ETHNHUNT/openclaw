@@ -1,16 +1,15 @@
 [Unit]
 Description=OpenClaw Gateway Service
 Documentation=https://docs.openclaw.ai/gateway
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
 Environment="NODE_ENV=production"
-Environment="PATH=/home/codespace/.local/share/pnpm:/home/codespace/.local/bin:/home/codespace/nvm/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # NOTE: This unit file is intended for GitHub Codespaces; update the WorkingDirectory if used elsewhere.
 WorkingDirectory=/workspaces/openclaw
-ExecStartPre=/bin/sh -c 'printf "systemd unit PATH: %s\n" "$PATH" >&2'
-ExecStart=/home/codespace/.local/bin/openclaw gateway run --bind loopback --port 18789 --force
+ExecStart=/bin/bash -lc 'exec openclaw gateway run --bind loopback --port 18789 --force'
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
