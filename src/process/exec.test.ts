@@ -38,10 +38,10 @@ describe("runCommandWithTimeout", () => {
 
   it("kills command when no output timeout elapses", async () => {
     const result = await runCommandWithTimeout(
-      [process.execPath, "-e", "setTimeout(() => {}, 10_000)"],
+      [process.execPath, "-e", "setTimeout(() => {}, 1_000)"],
       {
-        timeoutMs: 5_000,
-        noOutputTimeoutMs: 100,
+        timeoutMs: 1_000,
+        noOutputTimeoutMs: 35,
       },
     );
 
@@ -55,25 +55,26 @@ describe("runCommandWithTimeout", () => {
       [
         process.execPath,
         "-e",
-        'let i=0; const t=setInterval(() => { process.stdout.write("."); i += 1; if (i >= 3) { clearInterval(t); process.exit(0); } }, 20);',
+        'let i=0; const t=setInterval(() => { process.stdout.write("."); i += 1; if (i >= 2) { clearInterval(t); process.exit(0); } }, 5);',
       ],
       {
-        timeoutMs: 5_000,
-        noOutputTimeoutMs: 100,
+        timeoutMs: 1_000,
+        noOutputTimeoutMs: 120,
       },
     );
 
-    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.code ?? 0).toBe(0);
     expect(result.termination).toBe("exit");
     expect(result.noOutputTimedOut).toBe(false);
-    expect(result.stdout.length).toBeGreaterThanOrEqual(3);
+    expect(result.stdout.length).toBeGreaterThanOrEqual(2);
   });
 
   it("reports global timeout termination when overall timeout elapses", async () => {
     const result = await runCommandWithTimeout(
-      [process.execPath, "-e", "setTimeout(() => {}, 10_000)"],
+      [process.execPath, "-e", "setTimeout(() => {}, 1_000)"],
       {
-        timeoutMs: 80,
+        timeoutMs: 15,
       },
     );
 

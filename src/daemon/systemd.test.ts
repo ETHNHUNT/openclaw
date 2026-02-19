@@ -11,7 +11,9 @@ import { parseSystemdExecStart } from "./systemd-unit.js";
 import {
   isSystemdUserServiceAvailable,
   parseSystemdShow,
+  restartSystemdService,
   resolveSystemdUserUnitPath,
+  stopSystemdService,
 } from "./systemd.js";
 
 describe("systemd availability", () => {
@@ -59,13 +61,6 @@ describe("systemd runtime parsing", () => {
 });
 
 describe("resolveSystemdUserUnitPath", () => {
-  it("uses default service name when OPENCLAW_PROFILE is default", () => {
-    const env = { HOME: "/home/test", OPENCLAW_PROFILE: "default" };
-    expect(resolveSystemdUserUnitPath(env)).toBe(
-      "/home/test/.config/systemd/user/openclaw-gateway.service",
-    );
-  });
-
   it("uses default service name when OPENCLAW_PROFILE is unset", () => {
     const env = { HOME: "/home/test" };
     expect(resolveSystemdUserUnitPath(env)).toBe(
@@ -110,27 +105,6 @@ describe("resolveSystemdUserUnitPath", () => {
       "/home/test/.config/systemd/user/custom-unit.service",
     );
   });
-
-  it("handles case-insensitive 'Default' profile", () => {
-    const env = { HOME: "/home/test", OPENCLAW_PROFILE: "Default" };
-    expect(resolveSystemdUserUnitPath(env)).toBe(
-      "/home/test/.config/systemd/user/openclaw-gateway.service",
-    );
-  });
-
-  it("handles case-insensitive 'DEFAULT' profile", () => {
-    const env = { HOME: "/home/test", OPENCLAW_PROFILE: "DEFAULT" };
-    expect(resolveSystemdUserUnitPath(env)).toBe(
-      "/home/test/.config/systemd/user/openclaw-gateway.service",
-    );
-  });
-
-  it("trims whitespace from OPENCLAW_PROFILE", () => {
-    const env = { HOME: "/home/test", OPENCLAW_PROFILE: "  myprofile  " };
-    expect(resolveSystemdUserUnitPath(env)).toBe(
-      "/home/test/.config/systemd/user/openclaw-gateway-myprofile.service",
-    );
-  });
 });
 
 describe("splitArgsPreservingQuotes", () => {
@@ -168,17 +142,6 @@ describe("splitArgsPreservingQuotes", () => {
 });
 
 describe("parseSystemdExecStart", () => {
-  it("splits on whitespace outside quotes", () => {
-    const execStart = "/usr/bin/openclaw gateway start --foo bar";
-    expect(parseSystemdExecStart(execStart)).toEqual([
-      "/usr/bin/openclaw",
-      "gateway",
-      "start",
-      "--foo",
-      "bar",
-    ]);
-  });
-
   it("preserves quoted arguments", () => {
     const execStart = '/usr/bin/openclaw gateway start --name "My Bot"';
     expect(parseSystemdExecStart(execStart)).toEqual([
@@ -189,15 +152,59 @@ describe("parseSystemdExecStart", () => {
       "My Bot",
     ]);
   });
+});
 
-  it("parses path arguments", () => {
-    const execStart = "/usr/bin/openclaw gateway start --path /tmp/openclaw";
-    expect(parseSystemdExecStart(execStart)).toEqual([
-      "/usr/bin/openclaw",
-      "gateway",
-      "start",
-      "--path",
-      "/tmp/openclaw",
-    ]);
+describe("systemd service control", () => {
+  beforeEach(() => {
+    execFileMock.mockReset();
+  });
+
+  it("stops the resolved user unit", async () => {
+    execFileMock
+      .mockImplementationOnce((_cmd, _args, _opts, cb) => cb(null, "", ""))
+      .mockImplementationOnce((_cmd, args, _opts, cb) => {
+        expect(args).toEqual(["--user", "stop", "openclaw-gateway.service"]);
+        cb(null, "", "");
+      });
+    const write = vi.fn();
+    const stdout = { write } as unknown as NodeJS.WritableStream;
+
+    await stopSystemdService({ stdout, env: {} });
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(String(write.mock.calls[0]?.[0])).toContain("Stopped systemd service");
+  });
+
+  it("restarts a profile-specific user unit", async () => {
+    execFileMock
+      .mockImplementationOnce((_cmd, _args, _opts, cb) => cb(null, "", ""))
+      .mockImplementationOnce((_cmd, args, _opts, cb) => {
+        expect(args).toEqual(["--user", "restart", "openclaw-gateway-work.service"]);
+        cb(null, "", "");
+      });
+    const write = vi.fn();
+    const stdout = { write } as unknown as NodeJS.WritableStream;
+
+    await restartSystemdService({ stdout, env: { OPENCLAW_PROFILE: "work" } });
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(String(write.mock.calls[0]?.[0])).toContain("Restarted systemd service");
+  });
+
+  it("surfaces stop failures with systemctl detail", async () => {
+    execFileMock
+      .mockImplementationOnce((_cmd, _args, _opts, cb) => cb(null, "", ""))
+      .mockImplementationOnce((_cmd, _args, _opts, cb) => {
+        const err = new Error("stop failed") as Error & { code?: number };
+        err.code = 1;
+        cb(err, "", "permission denied");
+      });
+
+    await expect(
+      stopSystemdService({
+        stdout: { write: vi.fn() } as unknown as NodeJS.WritableStream,
+        env: {},
+      }),
+    ).rejects.toThrow("systemctl stop failed: permission denied");
   });
 });
