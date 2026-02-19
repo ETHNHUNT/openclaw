@@ -139,7 +139,67 @@ export async function loadModelCatalog(params?: {
         const input = Array.isArray(entry?.input) ? entry.input : undefined;
         models.push({ id, name, provider, contextWindow, reasoning, input });
       }
+
+      // Merge configured-only models from `agents.defaults.models` into the
+      // returned catalog so that models explicitly configured by users (for
+      // example `copilot-proxy/raptor-mini`) appear in the picker and other
+      // catalog-driven UI even when the ModelRegistry does not list them.
+      try {
+        const configuredKeys = Object.keys(cfg?.agents?.defaults?.models ?? {});
+        for (const rawKey of configuredKeys) {
+          const trimmed = String(rawKey ?? "").trim();
+          if (!trimmed || !trimmed.includes("/")) {
+            continue;
+          }
+          const slash = trimmed.indexOf("/");
+          const provider = trimmed.slice(0, slash).trim();
+          const id = trimmed.slice(slash + 1).trim();
+          if (!provider || !id) {
+            continue;
+          }
+          const exists = models.some(
+            (m) =>
+              m.provider.toLowerCase() === provider.toLowerCase() &&
+              m.id.toLowerCase() === id.toLowerCase(),
+          );
+          if (!exists) {
+            models.push({ id, name: id, provider });
+          }
+        }
+      } catch {
+        // Be conservative: don't fail catalog loading if configured-model merging trips.
+      }
+
       applyOpenAICodexSparkFallback(models);
+
+      // Also surface models from inline provider configs (models.providers.*)
+      // in openclaw.json. This ensures custom providers like kilocode appear in
+      // the model picker without requiring models.json to be pre-written.
+      const inlineProviders = cfg.models?.providers ?? {};
+      const registeredKeys = new Set(models.map((m) => `${m.provider}/${m.id}`));
+      for (const [providerName, providerConfig] of Object.entries(inlineProviders)) {
+        const modelDefs = Array.isArray(providerConfig?.models) ? providerConfig.models : [];
+        for (const modelDef of modelDefs) {
+          const id = String(modelDef?.id ?? "").trim();
+          if (!id) {
+            continue;
+          }
+          const key = `${providerName}/${id}`;
+          if (registeredKeys.has(key)) {
+            continue;
+          } // pi-ai registry already has it
+          registeredKeys.add(key);
+          const name = String(modelDef?.name ?? id).trim() || id;
+          const contextWindow =
+            typeof modelDef?.contextWindow === "number" && modelDef.contextWindow > 0
+              ? modelDef.contextWindow
+              : undefined;
+          const reasoning =
+            typeof modelDef?.reasoning === "boolean" ? modelDef.reasoning : undefined;
+          const input = Array.isArray(modelDef?.input) ? modelDef.input : undefined;
+          models.push({ id, name, provider: providerName, contextWindow, reasoning, input });
+        }
+      }
 
       if (models.length === 0) {
         // If we found nothing, don't cache this result so we can try again.
