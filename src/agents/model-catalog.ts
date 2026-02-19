@@ -6,6 +6,7 @@ export type ModelCatalogEntry = {
   id: string;
   name: string;
   provider: string;
+  api?: string;
   contextWindow?: number;
   reasoning?: boolean;
   input?: Array<"text" | "image">;
@@ -197,7 +198,8 @@ export async function loadModelCatalog(params?: {
           const reasoning =
             typeof modelDef?.reasoning === "boolean" ? modelDef.reasoning : undefined;
           const input = Array.isArray(modelDef?.input) ? modelDef.input : undefined;
-          models.push({ id, name, provider: providerName, contextWindow, reasoning, input });
+          const api = String(providerConfig?.api ?? "").trim() || undefined;
+          models.push({ id, name, provider: providerName, contextWindow, reasoning, input, api });
         }
       }
 
