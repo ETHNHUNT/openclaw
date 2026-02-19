@@ -16,6 +16,7 @@ const DEFAULT_MODEL_IDS = [
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
   "gpt-5-mini",
+  "raptor-mini-preview",
   "claude-opus-4.6",
   "claude-opus-4.5",
   "claude-sonnet-4.5",
@@ -59,6 +60,9 @@ function parseModelIds(input: string): string[] {
 }
 
 function buildModelDefinition(modelId: string) {
+  // Model-specific overrides (add new models here as needed)
+  const modelContextWindow = modelId === "raptor-mini-preview" ? 200_000 : DEFAULT_CONTEXT_WINDOW;
+
   return {
     id: modelId,
     name: modelId,
@@ -66,7 +70,7 @@ function buildModelDefinition(modelId: string) {
     reasoning: false,
     input: ["text", "image"] as Array<"text" | "image">,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: DEFAULT_CONTEXT_WINDOW,
+    contextWindow: modelContextWindow,
     maxTokens: DEFAULT_MAX_TOKENS,
   };
 }

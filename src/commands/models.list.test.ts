@@ -236,7 +236,7 @@ describe("models list/status", () => {
     expect(payload.models[0]?.available).toBe(false);
   });
 
-  it("models list resolves antigravity opus 4.6 thinking from 4.5 template", async () => {
+  it("models list does not resolve antigravity opus 4.6 thinking through forward-compat - must be explicitly configured", async () => {
     loadConfig.mockReturnValue({
       agents: {
         defaults: {
@@ -268,13 +268,17 @@ describe("models list/status", () => {
 
     expect(runtime.log).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0]));
+    // Forward-compat resolution for Antigravity Opus 4.6 is disabled.
+    // Configured Opus 4.6 (thinking) will appear as missing since it's not in registry
+    // and forward-compat resolution is disabled for Antigravity.
     expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-6-thinking");
-    expect(payload.models[0]?.missing).toBe(false);
+    expect(payload.models[0]?.missing).toBe(true);
     expect(payload.models[0]?.tags).toContain("default");
     expect(payload.models[0]?.tags).toContain("configured");
+    expect(payload.models[0]?.tags).toContain("missing");
   });
 
-  it("models list resolves antigravity opus 4.6 (non-thinking) from 4.5 template", async () => {
+  it("models list does not resolve antigravity opus 4.6 non-thinking through forward-compat - must be explicitly configured", async () => {
     loadConfig.mockReturnValue({
       agents: {
         defaults: {
@@ -306,19 +310,23 @@ describe("models list/status", () => {
 
     expect(runtime.log).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0]));
+    // Forward-compat resolution for Antigravity Opus 4.6 is disabled.
+    // Configured Opus 4.6 (non-thinking) will appear as missing since it's not in registry
+    // and forward-compat resolution is disabled for Antigravity.
     expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-6");
-    expect(payload.models[0]?.missing).toBe(false);
+    expect(payload.models[0]?.missing).toBe(true);
     expect(payload.models[0]?.tags).toContain("default");
     expect(payload.models[0]?.tags).toContain("configured");
+    expect(payload.models[0]?.tags).toContain("missing");
   });
 
-  it("models list marks synthesized antigravity opus 4.6 thinking as available when template is available", async () => {
+  it("models list shows configured 4.5 thinking as available when present in registry", async () => {
     loadConfig.mockReturnValue({
       agents: {
         defaults: {
-          model: "google-antigravity/claude-opus-4-6-thinking",
+          model: "google-antigravity/claude-opus-4-5-thinking",
           models: {
-            "google-antigravity/claude-opus-4-6-thinking": {},
+            "google-antigravity/claude-opus-4-5-thinking": {},
           },
         },
       },
@@ -343,18 +351,18 @@ describe("models list/status", () => {
 
     expect(runtime.log).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0]));
-    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-6-thinking");
+    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-5-thinking");
     expect(payload.models[0]?.missing).toBe(false);
     expect(payload.models[0]?.available).toBe(true);
   });
 
-  it("models list marks synthesized antigravity opus 4.6 (non-thinking) as available when template is available", async () => {
+  it("models list shows configured 4.5 non-thinking as available when present in registry", async () => {
     loadConfig.mockReturnValue({
       agents: {
         defaults: {
-          model: "google-antigravity/claude-opus-4-6",
+          model: "google-antigravity/claude-opus-4-5",
           models: {
-            "google-antigravity/claude-opus-4-6": {},
+            "google-antigravity/claude-opus-4-5": {},
           },
         },
       },
@@ -379,7 +387,7 @@ describe("models list/status", () => {
 
     expect(runtime.log).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0]));
-    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-6");
+    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-5");
     expect(payload.models[0]?.missing).toBe(false);
     expect(payload.models[0]?.available).toBe(true);
   });
@@ -388,9 +396,9 @@ describe("models list/status", () => {
     loadConfig.mockReturnValue({
       agents: {
         defaults: {
-          model: "google-antigravity/claude-opus-4-6-thinking",
+          model: "google-antigravity/claude-opus-4-5-thinking",
           models: {
-            "google-antigravity/claude-opus-4-6-thinking": {},
+            "google-antigravity/claude-opus-4-5-thinking": {},
           },
         },
       },
@@ -415,24 +423,23 @@ describe("models list/status", () => {
       cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
     };
     modelRegistryState.models = [template];
-    modelRegistryState.available = [];
+    modelRegistryState.available = [template];
     await modelsListCommand({ json: true }, runtime);
 
     expect(runtime.log).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0]));
-    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-6-thinking");
+    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-5-thinking");
     expect(payload.models[0]?.missing).toBe(false);
-    expect(payload.models[0]?.available).toBe(false);
-    listProfilesForProvider.mockReturnValue([]);
+    expect(payload.models[0]?.available).toBe(true);
   });
 
   it("models list falls back to auth heuristics when registry availability is unavailable", async () => {
     loadConfig.mockReturnValue({
       agents: {
         defaults: {
-          model: "google-antigravity/claude-opus-4-6-thinking",
+          model: "google-antigravity/claude-opus-4-5-thinking",
           models: {
-            "google-antigravity/claude-opus-4-6-thinking": {},
+            "google-antigravity/claude-opus-4-5-thinking": {},
           },
         },
       },
@@ -470,7 +477,7 @@ describe("models list/status", () => {
     expect(runtime.error.mock.calls[0]?.[0]).toContain("getAvailable failed");
     expect(runtime.log).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0]));
-    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-6-thinking");
+    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-5-thinking");
     expect(payload.models[0]?.missing).toBe(false);
     expect(payload.models[0]?.available).toBe(true);
   });
@@ -479,7 +486,7 @@ describe("models list/status", () => {
     loadConfig.mockReturnValue({
       agents: {
         defaults: {
-          model: "google-antigravity/claude-opus-4-6-thinking",
+          model: "google-antigravity/claude-opus-4-5-thinking",
           models: {
             "google-antigravity/claude-opus-4-6-thinking": {},
           },
@@ -515,7 +522,7 @@ describe("models list/status", () => {
     expect(runtime.error.mock.calls[0]?.[0]).toContain("non-array value");
     expect(runtime.log).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0]));
-    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-6-thinking");
+    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-5-thinking");
     expect(payload.models[0]?.missing).toBe(false);
     expect(payload.models[0]?.available).toBe(true);
   });
@@ -524,9 +531,9 @@ describe("models list/status", () => {
     loadConfig.mockReturnValue({
       agents: {
         defaults: {
-          model: "google-antigravity/claude-opus-4-6-thinking",
+          model: "google-antigravity/claude-opus-4-5-thinking",
           models: {
-            "google-antigravity/claude-opus-4-6-thinking": {},
+            "google-antigravity/claude-opus-4-5-thinking": {},
           },
         },
       },
@@ -565,7 +572,7 @@ describe("models list/status", () => {
     );
     expect(runtime.log).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0]));
-    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-6-thinking");
+    expect(payload.models[0]?.key).toBe("google-antigravity/claude-opus-4-5-thinking");
     expect(payload.models[0]?.missing).toBe(false);
     expect(payload.models[0]?.available).toBe(true);
   });

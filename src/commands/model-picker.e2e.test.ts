@@ -73,6 +73,35 @@ describe("promptDefaultModel", () => {
     );
   });
 
+  it("shows copilot-proxy/raptor-mini-preview in the picker when present in catalog", async () => {
+    loadModelCatalog.mockResolvedValue([
+      {
+        provider: "copilot-proxy",
+        id: "raptor-mini-preview",
+        name: "Raptor Mini (Preview)",
+        contextWindow: 200000,
+      },
+    ]);
+
+    const select = vi.fn(async (params) => {
+      const first = params.options[0];
+      return first?.value ?? "";
+    });
+    const prompter = makePrompter({ select });
+    const config = { agents: { defaults: {} } } as OpenClawConfig;
+
+    await promptDefaultModel({
+      config,
+      prompter,
+      allowKeep: false,
+      includeManual: false,
+      ignoreAllowlist: true,
+    });
+
+    const options = select.mock.calls[0]?.[0]?.options ?? [];
+    expect(options.some((opt) => opt.value === "copilot-proxy/raptor-mini-preview")).toBe(true);
+  });
+
   it("supports configuring vLLM during onboarding", async () => {
     loadModelCatalog.mockResolvedValue([
       {

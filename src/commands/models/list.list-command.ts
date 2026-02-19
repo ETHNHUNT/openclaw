@@ -10,6 +10,18 @@ import { loadModelRegistry, toModelRow } from "./list.registry.js";
 import { printModelTable } from "./list.table.js";
 import { DEFAULT_PROVIDER, ensureFlagCompatibility, isLocalBaseUrl, modelKey } from "./shared.js";
 
+/**
+ * Check if a model is Antigravity Opus 4.6 (forward-compat variants that are disabled).
+ * Forward-compat resolution for Antigravity Opus 4.6 is disabled; users should
+ * explicitly configure these models in ~/.openclaw/models.json if they wish to use them.
+ */
+function isAntigravityRuntimeForwardCompat(provider: string, modelId: string): boolean {
+  return (
+    provider === "google-antigravity" &&
+    (modelId === "claude-opus-4-6" || modelId === "claude-opus-4-6-thinking")
+  );
+}
+
 export async function modelsListCommand(
   opts: {
     all?: boolean;
@@ -99,17 +111,24 @@ export async function modelsListCommand(
       }
       let model = modelByKey.get(entry.key);
       if (!model && modelRegistry) {
-        const forwardCompat = resolveForwardCompatModel(
-          entry.ref.provider,
-          entry.ref.model,
-          modelRegistry,
-        );
-        if (forwardCompat) {
-          model = forwardCompat;
-          modelByKey.set(entry.key, forwardCompat);
+        // Antigravity forward-compat synthesis is disabled;
+        // users should explicitly configure models in ~/.openclaw/models.json
+        const isAntigravityForwardCompat =
+          entry.ref.provider === "google-antigravity" &&
+          (entry.ref.model === "claude-opus-4-6" || entry.ref.model === "claude-opus-4-6-thinking");
+        if (!isAntigravityForwardCompat) {
+          const forwardCompat = resolveForwardCompatModel(
+            entry.ref.provider,
+            entry.ref.model,
+            modelRegistry,
+          );
+          if (forwardCompat) {
+            model = forwardCompat;
+            modelByKey.set(entry.key, forwardCompat);
+          }
         }
       }
-      if (!model) {
+      if (!model && !isAntigravityRuntimeForwardCompat(entry.ref.provider, entry.ref.model)) {
         const { resolveModel } = await import("../../agents/pi-embedded-runner/model.js");
         model = resolveModel(entry.ref.provider, entry.ref.model, undefined, cfg).model;
       }

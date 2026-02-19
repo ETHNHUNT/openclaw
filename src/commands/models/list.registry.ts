@@ -10,10 +10,6 @@ import {
   resolveAwsSdkEnvVarName,
   resolveEnvApiKey,
 } from "../../agents/model-auth.js";
-import {
-  ANTIGRAVITY_OPUS_46_FORWARD_COMPAT_CANDIDATES,
-  resolveForwardCompatModel,
-} from "../../agents/model-forward-compat.js";
 import { ensureOpenClawModelsJson } from "../../agents/models-config.js";
 import { discoverAuthStorage, discoverModels } from "../../agents/pi-model-discovery.js";
 import {
@@ -139,29 +135,15 @@ type SynthesizedForwardCompat = {
 
 function appendAntigravityForwardCompatModels(
   models: Model<Api>[],
-  modelRegistry: ModelRegistry,
+  _modelRegistry: ModelRegistry,
 ): { models: Model<Api>[]; synthesizedForwardCompat: SynthesizedForwardCompat[] } {
   const nextModels = [...models];
   const synthesizedForwardCompat: SynthesizedForwardCompat[] = [];
 
-  for (const candidate of ANTIGRAVITY_OPUS_46_FORWARD_COMPAT_CANDIDATES) {
-    const key = modelKey("google-antigravity", candidate.id);
-    const hasForwardCompat = nextModels.some((model) => modelKey(model.provider, model.id) === key);
-    if (hasForwardCompat) {
-      continue;
-    }
-
-    const fallback = resolveForwardCompatModel("google-antigravity", candidate.id, modelRegistry);
-    if (!fallback) {
-      continue;
-    }
-
-    nextModels.push(fallback);
-    synthesizedForwardCompat.push({
-      key,
-      templatePrefixes: candidate.templatePrefixes,
-    });
-  }
+  // Forward-compat synthesis for Antigravity Opus 4.6 is disabled.
+  // Users should explicitly configure Opus 4.6 models in ~/.openclaw/models.json
+  // if they wish to use them, since forward-compat models are synthetic and
+  // the actual 4.6 API may differ significantly from the 4.5 template.
 
   return { models: nextModels, synthesizedForwardCompat };
 }
