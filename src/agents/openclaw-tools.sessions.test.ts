@@ -1,5 +1,6 @@
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../config/config.js";
 import {
   addSubagentRunForTests,
   listSubagentRunsForRequester,
@@ -24,6 +25,7 @@ vi.mock("../config/config.js", async (importOriginal) => {
       tools: {
         // Keep sessions tools permissive in this suite; dedicated visibility tests cover defaults.
         sessions: { visibility: "all" },
+        agentToAgent: { enabled: true },
       },
     }),
     resolveGatewayPort: () => 18789,
@@ -31,7 +33,23 @@ vi.mock("../config/config.js", async (importOriginal) => {
 });
 
 import "./test-helpers/fast-core-tools.js";
-import { createOpenClawTools } from "./openclaw-tools.js";
+import { __testing as openClawToolsTesting, createOpenClawTools } from "./openclaw-tools.js";
+import { __testing as subagentControlTesting } from "./subagent-control.js";
+import { __testing as agentStepTesting } from "./tools/agent-step.js";
+import { __testing as sessionsResolutionTesting } from "./tools/sessions-resolution.js";
+import { __testing as sessionsSendA2ATesting } from "./tools/sessions-send-tool.a2a.js";
+
+const TEST_CONFIG = {
+  session: {
+    mainKey: "main",
+    scope: "per-sender",
+    agentToAgent: { maxPingPongTurns: 2 },
+  },
+  tools: {
+    sessions: { visibility: "all" },
+    agentToAgent: { enabled: true },
+  },
+} as OpenClawConfig;
 
 const waitForCalls = async (getCount: () => number, count: number, timeoutMs = 2000) => {
   await vi.waitFor(
@@ -51,6 +69,22 @@ describe("sessions tools", () => {
 
   beforeEach(() => {
     callGatewayMock.mockClear();
+    openClawToolsTesting.setDepsForTest({
+      callGateway: (opts: unknown) => callGatewayMock(opts),
+      config: TEST_CONFIG,
+    });
+    agentStepTesting.setDepsForTest({
+      callGateway: (opts: unknown) => callGatewayMock(opts),
+    });
+    sessionsResolutionTesting.setDepsForTest({
+      callGateway: (opts: unknown) => callGatewayMock(opts),
+    });
+    sessionsSendA2ATesting.setDepsForTest({
+      callGateway: (opts: unknown) => callGatewayMock(opts),
+    });
+    subagentControlTesting.setDepsForTest({
+      callGateway: (opts: unknown) => callGatewayMock(opts),
+    });
   });
 
   it("uses number (not integer) in tool schemas for Gemini compatibility", () => {
@@ -92,6 +126,8 @@ describe("sessions tools", () => {
     expect(schemaProp("sessions_spawn", "runTimeoutSeconds").type).toBe("number");
     expect(schemaProp("sessions_spawn", "thread").type).toBe("boolean");
     expect(schemaProp("sessions_spawn", "mode").type).toBe("string");
+    expect(schemaProp("sessions_spawn", "sandbox").type).toBe("string");
+    expect(schemaProp("sessions_spawn", "streamTo").type).toBe("string");
     expect(schemaProp("sessions_spawn", "runtime").type).toBe("string");
     expect(schemaProp("sessions_spawn", "cwd").type).toBe("string");
     expect(schemaProp("subagents", "recentMinutes").type).toBe("number");
@@ -118,6 +154,11 @@ describe("sessions tools", () => {
               updatedAt: 11,
               channel: "discord",
               displayName: "discord:g-dev",
+              status: "running",
+              startedAt: 100,
+              runtimeMs: 42,
+              estimatedCostUsd: 0.0042,
+              childSessions: ["agent:main:subagent:worker"],
             },
             {
               key: "cron:job-1",
@@ -155,6 +196,11 @@ describe("sessions tools", () => {
       sessions?: Array<{
         key?: string;
         channel?: string;
+        status?: string;
+        startedAt?: number;
+        runtimeMs?: number;
+        estimatedCostUsd?: number;
+        childSessions?: string[];
         messages?: Array<{ role?: string }>;
       }>;
     };
@@ -163,6 +209,13 @@ describe("sessions tools", () => {
     expect(main?.channel).toBe("whatsapp");
     expect(main?.messages?.length).toBe(1);
     expect(main?.messages?.[0]?.role).toBe("assistant");
+
+    const group = details.sessions?.find((s) => s.key === "discord:group:dev");
+    expect(group?.status).toBe("running");
+    expect(group?.startedAt).toBe(100);
+    expect(group?.runtimeMs).toBe(42);
+    expect(group?.estimatedCostUsd).toBe(0.0042);
+    expect(group?.childSessions).toEqual(["agent:main:subagent:worker"]);
 
     const cronOnly = await tool.execute("call2", { kinds: ["cron"] });
     const cronDetails = cronOnly.details as {
@@ -809,7 +862,7 @@ describe("sessions tools", () => {
     );
     expect(replySteps).toHaveLength(2);
     expect(sendParams).toMatchObject({
-      to: "channel:target",
+      to: "group:target",
       channel: "discord",
       message: "announce now",
     });
@@ -827,6 +880,16 @@ describe("sessions tools", () => {
       cleanup: "keep",
       createdAt: now - 2 * 60_000,
       startedAt: now - 2 * 60_000,
+    });
+    addSubagentRunForTests({
+      runId: "run-child",
+      childSessionKey: "agent:main:subagent:active:subagent:child",
+      requesterSessionKey: "agent:main:subagent:active",
+      requesterDisplayKey: "subagent:active",
+      task: "child worker",
+      cleanup: "keep",
+      createdAt: now - 60_000,
+      startedAt: now - 60_000,
     });
     addSubagentRunForTests({
       runId: "run-recent",
@@ -864,15 +927,75 @@ describe("sessions tools", () => {
     const result = await tool.execute("call-subagents-list", { action: "list" });
     const details = result.details as {
       status?: string;
-      active?: unknown[];
+      active?: Array<{ runId?: string; childSessions?: string[] }>;
       recent?: unknown[];
       text?: string;
     };
     expect(details.status).toBe("ok");
     expect(details.active).toHaveLength(1);
+    expect(details.active?.[0]).toMatchObject({
+      runId: "run-active",
+      childSessions: ["agent:main:subagent:active:subagent:child"],
+    });
     expect(details.recent).toHaveLength(1);
     expect(details.text).toContain("active subagents:");
     expect(details.text).toContain("recent (last 30m):");
+  });
+
+  it("subagents list keeps ended orchestrators active while descendants are pending", async () => {
+    resetSubagentRegistryForTests();
+    const now = Date.now();
+    addSubagentRunForTests({
+      runId: "run-orchestrator-ended",
+      childSessionKey: "agent:main:subagent:orchestrator-ended",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "orchestrate child workers",
+      cleanup: "keep",
+      createdAt: now - 5 * 60_000,
+      startedAt: now - 5 * 60_000,
+      endedAt: now - 4 * 60_000,
+      outcome: { status: "ok" },
+    });
+    addSubagentRunForTests({
+      runId: "run-orchestrator-child-active",
+      childSessionKey: "agent:main:subagent:orchestrator-ended:subagent:child",
+      requesterSessionKey: "agent:main:subagent:orchestrator-ended",
+      requesterDisplayKey: "subagent:orchestrator-ended",
+      task: "child worker still running",
+      cleanup: "keep",
+      createdAt: now - 60_000,
+      startedAt: now - 60_000,
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:main:main",
+    }).find((candidate) => candidate.name === "subagents");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing subagents tool");
+    }
+
+    const result = await tool.execute("call-subagents-list-orchestrator", { action: "list" });
+    const details = result.details as {
+      status?: string;
+      active?: Array<{ runId?: string; status?: string; pendingDescendants?: number }>;
+      recent?: Array<{ runId?: string }>;
+      text?: string;
+    };
+
+    expect(details.status).toBe("ok");
+    expect(details.active).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: "run-orchestrator-ended",
+          status: "active (waiting on 1 child)",
+          pendingDescendants: 1,
+        }),
+      ]),
+    );
+    expect(details.recent?.find((entry) => entry.runId === "run-orchestrator-ended")).toBeFalsy();
+    expect(details.text).toContain("active (waiting on 1 child)");
   });
 
   it("subagents list usage separates io tokens from prompt/cache", async () => {
@@ -1049,6 +1172,74 @@ describe("sessions tools", () => {
     expect(details.status).toBe("ok");
     expect(details.runId).toBe("run-active");
     expect(details.text).toContain("killed");
+  });
+
+  it("subagents numeric targets treat ended orchestrators waiting on children as active", async () => {
+    resetSubagentRegistryForTests();
+    const now = Date.now();
+    addSubagentRunForTests({
+      runId: "run-orchestrator-ended",
+      childSessionKey: "agent:main:subagent:orchestrator-ended",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "orchestrator",
+      cleanup: "keep",
+      createdAt: now - 90_000,
+      startedAt: now - 90_000,
+      endedAt: now - 60_000,
+      outcome: { status: "ok" },
+    });
+    addSubagentRunForTests({
+      runId: "run-leaf-active",
+      childSessionKey: "agent:main:subagent:orchestrator-ended:subagent:leaf",
+      requesterSessionKey: "agent:main:subagent:orchestrator-ended",
+      requesterDisplayKey: "subagent:orchestrator-ended",
+      task: "leaf",
+      cleanup: "keep",
+      createdAt: now - 30_000,
+      startedAt: now - 30_000,
+    });
+    addSubagentRunForTests({
+      runId: "run-running",
+      childSessionKey: "agent:main:subagent:running",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "running",
+      cleanup: "keep",
+      createdAt: now - 20_000,
+      startedAt: now - 20_000,
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:main:main",
+    }).find((candidate) => candidate.name === "subagents");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing subagents tool");
+    }
+
+    const list = await tool.execute("call-subagents-list-order-waiting", {
+      action: "list",
+    });
+    const listDetails = list.details as {
+      active?: Array<{ runId?: string; status?: string }>;
+    };
+    expect(listDetails.active).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: "run-orchestrator-ended",
+          status: "active (waiting on 1 child)",
+        }),
+      ]),
+    );
+
+    const result = await tool.execute("call-subagents-kill-order-waiting", {
+      action: "kill",
+      target: "1",
+    });
+    const details = result.details as { status?: string; runId?: string };
+    expect(details.status).toBe("ok");
+    expect(details.runId).toBe("run-running");
   });
 
   it("subagents kill stops a running run", async () => {
